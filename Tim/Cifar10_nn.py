@@ -119,6 +119,7 @@ def x_gen_heatmap():
         model.load_state_dict(torch.load("./data/models/cifar10_cnn.pth"))
     except Exception:
         optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+
         model = Pt_nn.train_network(
             model=model,
             optimizer=optimizer,
@@ -126,7 +127,7 @@ def x_gen_heatmap():
             num_epochs=10,
             trainloader=load_trainset(batch_size=50),
             validloader=load_testset(),
-            savepath='./data/models/model.pth')
+            savepath='./data/models/cifar10_cnn.pth')
 
     # load the data for the heatmap generation
     data = iter(load_testset(shuffle=True)).next()

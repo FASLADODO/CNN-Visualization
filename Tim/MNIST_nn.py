@@ -118,7 +118,7 @@ def x_gen_heatmap():
 
     images, labels, act_maps, pred_indcs = Pt_nn.gen_heatmap_pure_gap(
         model, data)
-    return images, labels, act_maps, pred_indcs.view(-1, pred_indcs.size(1)), 
+    return images, labels, act_maps, pred_indcs.view(-1, pred_indcs.size(1))
 
 
 def x_plot_heatmaps():
