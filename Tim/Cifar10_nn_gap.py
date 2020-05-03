@@ -6,14 +6,16 @@ import torch.nn.functional as F
 import torchvision
 import torchvision.transforms as transforms
 
+import PIL
+
 import Pt_nn
 
 from skimage.transform import resize
 
 
-classes = (
+classes = [
     'plane', 'car', 'bird', 'cat', 'deer', 'dog',
-    'frog', 'horse', 'ship', 'truck')
+    'frog', 'horse', 'ship', 'truck']
 
 
 # Define the neural network that is used to classify images from the CIFAR10
@@ -21,55 +23,91 @@ classes = (
 class Cifar10_CNN(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(
-            in_channels=3, out_channels=8, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(
-            in_channels=8, out_channels=16, kernel_size=3, padding=1)
+        self.input_bn = nn.BatchNorm2d(3)
 
+        self.conv1 = nn.Conv2d(
+            in_channels=3, out_channels=16, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(
+            in_channels=16, out_channels=16, kernel_size=3, padding=1)
         self.conv3 = nn.Conv2d(
             in_channels=16, out_channels=16, kernel_size=3, padding=1)
+        self.conv3_bn = nn.BatchNorm2d(16)
+
         self.conv4 = nn.Conv2d(
-            in_channels=16, out_channels=24, kernel_size=3, padding=1)
-
+            in_channels=16, out_channels=32, kernel_size=3, padding=1)
         self.conv5 = nn.Conv2d(
-            in_channels=24, out_channels=24, kernel_size=3, padding=1)
-        self.conv6 = nn.Conv2d(
-            in_channels=24, out_channels=24, kernel_size=3, padding=1)
+            in_channels=32, out_channels=32, kernel_size=3, padding=1)
+        self.conv5_bn = nn.BatchNorm2d(32)
 
-        self.fc = nn.Linear(24, 10)
+        self.conv6 = nn.Conv2d(
+            in_channels=32, out_channels=64, kernel_size=3, padding=1)
+        self.conv7 = nn.Conv2d(
+            in_channels=64, out_channels=64, kernel_size=3, padding=1)
+        self.conv7_bn = nn.BatchNorm2d(64)
+
+        self.fc = nn.Linear(64, 10)
 
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
         self.gap = nn.AvgPool2d(kernel_size=8)
 
+        self.conv3_do = nn.Dropout(p=0.1)
+        self.conv5_do = nn.Dropout(p=0.25)
+        self.conv7_do = nn.Dropout(p=0.5)
+
     def forward(self, x):
-        x = self.pool(F.relu(self.conv2(self.conv1(x))))
-        x = self.pool(F.relu(self.conv4(self.conv3(x))))
-        x = self.gap(F.relu(self.conv6(self.conv5(x))))
+        x = self.input_bn(x)
+        x = self.conv3_bn(
+            self.pool(F.relu(self.conv3(self.conv2(self.conv1(x))))))
+        # x = self.conv3_do(x)
+        x = self.conv5_bn(self.pool(F.relu(self.conv5(self.conv4(x)))))
+        # x = self.conv5_do(x)
+        x = F.relu(self.conv6(self.conv5(x)))
+        # x_features = x
+        x = self.conv7_bn(self.gap(x))
+        # x = self.conv7_do(x)
         x = x.view(-1, x.size(1))
         x = self.fc(x)
         return x
 
     def forward_dbg(self, x):
-        x_conv2 = self.pool(F.relu(self.conv2(self.conv1(x))))
-        x_conv4 = self.pool(F.relu(self.conv4(self.conv3(x_conv2))))
-        x_conv6 = F.relu(self.conv6(self.conv5(x_conv4)))
-        x_conv6_vec = self.gap(x_conv6)
-        x_conv6_vec = x_conv6_vec.view(-1, x_conv6_vec.size(1))
-        pred = self.fc(x_conv6_vec)
-        return pred.detach(), x_conv6.detach()
+        x = self.input_bn(x)
+        x = self.conv3_bn(
+            self.pool(F.relu(self.conv3(self.conv2(self.conv1(x))))))
+        # x = self.conv3_do(x)
+        x = self.conv5_bn(self.pool(F.relu(self.conv5(self.conv4(x)))))
+        # x = self.conv5_do(x)
+        x = F.relu(self.conv6(self.conv5(x)))
+        x_features = x
+        x = self.conv7_bn(self.gap(x))
+        # x = self.conv7_do(x)
+        x = x.view(-1, x.size(1))
+        x = self.fc(x)
+        return x, x_features
 
 
 def load_trainset(
-        batch_size=4,
-        mean=(0.5, 0.5, 0.5),
-        std=(0.5, 0.5, 0.5),
+        batch_size=64,
         shuffle=True):
 
     transform = transforms.Compose(
         [
+            transforms.ColorJitter(
+                brightness=0.05, contrast=0.05, saturation=0.1, hue=0.05),
+            transforms.RandomChoice(
+                [
+                    transforms.RandomAffine(
+                        degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1),
+                        resample=PIL.Image.BILINEAR),
+                    transforms.RandomResizedCrop((32, 32), scale=(0.8, 1.0))
+                ]
+            ),
+            transforms.RandomHorizontalFlip(0.5),
+            transforms.RandomGrayscale(p=0.1),
             transforms.ToTensor(),
-            transforms.Normalize(mean, std)])
+            transforms.RandomErasing(p=0.2, scale=(0.02, 0.06), ratio=(1, 1))
+        ]
+    )
 
     trainset = torchvision.datasets.CIFAR10(
         root='./data/CIFAR10', train=True, download=True, transform=transform)
@@ -81,14 +119,11 @@ def load_trainset(
 
 def load_testset(
         batch_size=4,
-        mean=(0.5, 0.5, 0.5),
-        std=(0.5, 0.5, 0.5),
         shuffle=False):
 
     transform = transforms.Compose(
         [
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)])
+            transforms.ToTensor()])
 
     testset = torchvision.datasets.CIFAR10(
         root='./data/CIFAR10', train=False, download=True, transform=transform)
@@ -106,7 +141,7 @@ def x_train_Cifar10_nn():
             model=model,
             optimizer=optimizer,
             loss_func=nn.CrossEntropyLoss(),
-            num_epochs=10,
+            num_epochs=100,
             trainloader=load_trainset(batch_size=50),
             validloader=load_testset(),
             savepath='./data/models/cifar10_cnn.pth')
@@ -124,7 +159,7 @@ def x_gen_heatmap():
             model=model,
             optimizer=optimizer,
             loss_func=nn.CrossEntropyLoss(),
-            num_epochs=10,
+            num_epochs=100,
             trainloader=load_trainset(batch_size=50),
             validloader=load_testset(),
             savepath='./data/models/cifar10_cnn.pth')
@@ -132,9 +167,9 @@ def x_gen_heatmap():
     # load the data for the heatmap generation
     data = iter(load_testset(shuffle=True)).next()
 
-    images, labels, act_maps, predictions = Pt_nn.gen_heatmap_gap(model, data)
+    model.eval()
 
-    images = images * 0.5 + 0.5
+    images, labels, act_maps, predictions = Pt_nn.gen_heatmap_gap(model, data)
 
     return images, labels, act_maps, predictions
 
@@ -161,4 +196,14 @@ def x_plot_heatmaps():
 
 
 if __name__ == '__main__':
-    x_plot_heatmaps()
+    # x_plot_heatmaps()
+
+    # net = Cifar10_CNN()
+    # net.load_state_dict(torch.load('./data/models/cifar10_cnn.pth'))
+    # tl = load_trainset()
+
+    # Pt_nn.test_classification_accuracy(net, tl, classes)
+
+    tl = load_trainset()
+
+    Pt_nn.plot_imgs(tl, False)
