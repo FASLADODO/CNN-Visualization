@@ -2,7 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import torchvision
+
+import numpy as np
+
+import cv2
+
+from PIL import Image
+
 import matplotlib.pyplot as pyplt
+import matplotlib.image as mpimage
 
 
 # train the neural network to classify images of the CIFAR10 dataset.
@@ -20,6 +29,8 @@ def train_network(
 
     # train the network for 'num_epochs' epochs
     for epoch in range(num_epochs):
+
+        model.train()       # set to training mode
 
         # iterate over the full training set
         running_loss = 0.0
@@ -64,9 +75,11 @@ def test_classification_accuracy(
         testloader,
         classlabels=None):
 
+    model.eval()
+
     # count the number of correctly classified samples per class
     if classlabels is not None:
-        num_classes = torch.numel(classlabels)
+        num_classes = len(classlabels)
         class_correct = list(0. for i in range(num_classes))
         class_total = list(0. for i in range(num_classes))
 
@@ -75,28 +88,27 @@ def test_classification_accuracy(
     correct = 0
     total = 0
 
-    with torch.no_grad():
-        for data in testloader:
-            input, labels = data
-            outputs = model(input)
-            # total prediction accuracy
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+    for data in testloader:
+        input, labels = data
+        outputs = model(input)
+        # total prediction accuracy
+        _, predicted = torch.max(outputs.data, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
 
-            # per class prediction accuracy
-            if classlabels is not None:
-                _, predicted = torch.max(outputs, 1)
-                c = (predicted == labels).squeeze()
-                for i in range(torch.numel(labels)):
-                    label = labels[i]
-                    class_correct[label] += c[i].item()
-                    class_total[label] += 1
+        # per class prediction accuracy
+        if classlabels is not None:
+            _, predicted = torch.max(outputs, 1)
+            c = (predicted == labels).squeeze()
+            for i in range(torch.numel(labels)):
+                label = labels[i]
+                class_correct[label] += c[i].item()
+                class_total[label] += 1
 
     class_accuracy = []
     if classlabels is not None:
         for i in range(num_classes):
-            class_accuracy[i] = class_correct[i] / class_total[i]
+            class_accuracy.append(class_correct[i] / class_total[i])
             print('Accuracy of %10s : %2d %%' % (
                 classlabels[i], 100 * class_accuracy[i]))
 
@@ -136,10 +148,6 @@ def gen_heatmap_gap(model, data):
 
     act_maps = act_maps.sum(2)
 
-    # for act_map_indx in range(act_maps.size()[0]):
-    #    act_maps[act_map_indx, :, :] = act_maps[act_map_indx, :, :]\
-    #        / act_maps[act_map_indx, :, :].max()
-
     return images, labels, act_maps, predictions
 
 
@@ -151,8 +159,148 @@ def gen_heatmap_pure_gap(model, data):
     return images, labels, act_maps, pred
 
 
+# Generate the heatmap and overlays it over the given image.
+#   model:          Neural network model
+#   image:          Input image to classify
+#   class_indx:     Index of class for which the activation map should be
+#                   generated
+#   feature_layer:  The layer to which the CAM belongs to
+#   filename:       Name of the file that the CAM is saved to
+def gen_heatmap_grad(model, input_image, image, class_index=None, feature_layer=None, filename='CAM'):
+
+    # Make forward pass through the network with the given set of images.
+    model.eval()
+
+    pred = model.forward(input_image)
+
+    # Get the predicted class.
+    if class_index is None:
+        _, class_index = torch.max(pred, 1)
+    # predictions = F.softmax(pred, 1)
+
+    # Backward pass to compute the gradients of the activation layers.
+    pred[:, class_index].backward()
+
+    # Get the gradients from the model.
+    gradients = model.get_feature_gradients(feature_layer)
+    # Compute the weighting coefficients by averaging over the gradients of
+    # each feature layer.
+    alpha = torch.mean(gradients, dim=[0, 2, 3])
+
+    # Get the activation maps from the model.
+    activations = model.get_feature_maps(input_image, feature_layer).detach()
+
+    # Weight the activation maps with the weighting coefficients alpha.
+    for i in range(activations.size()[1]):
+        activations[:, i, :, :] *= alpha[i]
+
+    # Average the activations over all channels
+    heatmap = torch.mean(activations, dim=1).squeeze()
+
+    # Apply ReLU to the heatmap in order to only account for positive
+    # contributions to the predicted class.
+    heatmap = F.relu(heatmap)
+
+    # Normalize the heatmap
+    heatmap = heatmap / torch.max(heatmap)
+
+    # Convert image tensor to three channel image
+    if image.shape[0] == 3:
+        image_rgb = image
+    else:
+        image_rgb = image.repeat(3, 1, 1)
+
+    image_rgb = image_rgb.permute(1, 2, 0) * 255
+
+    heatmap = cv2.resize(heatmap.numpy(), (image.shape[2], image.shape[1]))
+    heatmap = np.uint8(255 * heatmap)
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    superimposed_img = heatmap * 0.4 + np.uint8(image_rgb.numpy())
+
+    filepath = './Tim/data/FeatureMaps/' + filename +\
+        '_c' + str(class_index) +\
+        '_f' + str(feature_layer) +\
+        '.jpg'
+
+    cv2.imwrite(filepath, superimposed_img)
+
+    # clip image to range [0, 255]
+    superimposed_img = np.maximum(0, superimposed_img)
+    superimposed_img = np.minimum(255, superimposed_img)
+
+    img = mpimage.imread(filepath)
+
+    pyplt.imshow(img)
+    pyplt.show()
+
+
 def plot_heatmaps(images, labels, act_maps, predictions, num_maps):
     act_maps = act_maps.detach()
+
+    act_maps = F.relu(act_maps / torch.max(act_maps))
+
+    nrows = images.size()[0]
+    ncols = min(6, predictions.size()[1])
+
+    height = 6
+    width = 8
+
+    fig, axs = pyplt.subplots(
+        nrows=nrows, ncols=ncols, figsize=[height, width])
+
+    for ax in axs.flat:
+        ax.axis('off')
+
+    for img_indx in range(images.size()[0]):
+        x = img_indx
+        y = 0
+
+        axs[x, y].imshow(
+            images[img_indx, :, :, :].permute([1, 2, 0]).squeeze())
+        axs[x, y].set_title(labels.numpy()[img_indx])
+
+    for img_indx in range(images.size()[0]):
+        sort_indcs = torch.argsort(
+            predictions[img_indx, :], descending=True)
+        for feature_indx in range(ncols - 1):
+            x = img_indx
+            y = feature_indx + 1
+
+            axs[x, y].imshow(
+                act_maps[img_indx, sort_indcs[feature_indx], :, :].squeeze(),
+                cmap='gray')
+            axs[x, y].set_title(
+                str(sort_indcs[feature_indx].tolist()) + ": " +
+                str(predictions.detach().numpy()[
+                    img_indx, sort_indcs[feature_indx].tolist()]))
+
+    pyplt.show()
+
+
+# helper function to show an image
+# (used in the `plot_classes_preds` function below)
+def matplotlib_imshow(img, one_channel=False):
+    if one_channel:
+        img = img.mean(dim=0)
+    npimg = img.numpy()
+    if one_channel:
+        pyplt.imshow(npimg, cmap="Greys")
+    else:
+        pyplt.imshow(np.transpose(npimg, (1, 2, 0)))
+
+    pyplt.show()
+
+
+def plot_imgs(loader, one_channel=True):
+    # get some random training images
+    dataiter = iter(loader)
+    images, labels = dataiter.next()
+
+    # create grid of images
+    img_grid = torchvision.utils.make_grid(images)
+
+    # show images
+    matplotlib_imshow(img_grid, one_channel=one_channel)
 
     act_maps = F.relu(act_maps)
     act_maps = act_maps / torch.max(act_maps)
