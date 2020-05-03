@@ -8,7 +8,7 @@ import torchvision.transforms as transforms
 
 import PIL
 
-import Pt_nn
+import Pt_nn2
 
 from skimage.transform import resize
 
