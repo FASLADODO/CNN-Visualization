@@ -17,23 +17,17 @@ class MNIST_CNN(nn.Module):
     def __init__(self):
         super().__init__()
         self.conv1 = nn.Conv2d(
-            in_channels=1,
-            out_channels=16,
-            kernel_size=3,
-            stride=2,
-            padding=1)
+            in_channels=1, out_channels=16,
+            kernel_size=3, stride=2, padding=1)
         self.conv2 = nn.Conv2d(
-            in_channels=16,
-            out_channels=16,
-            kernel_size=3,
-            stride=2,
-            padding=1)
+            in_channels=16, out_channels=32,
+            kernel_size=3, stride=2, padding=1)
         self.conv3 = nn.Conv2d(
-            in_channels=16,
-            out_channels=10,
-            kernel_size=3,
-            stride=1,
-            padding=1)
+            in_channels=32, out_channels=32,
+            kernel_size=3, stride=1, padding=1)
+        self.conv4 = nn.Conv2d(
+            in_channels=32, out_channels=10,
+            kernel_size=3, stride=1, padding=1)
 
         self.gap = nn.AvgPool2d(kernel_size=7)
 
@@ -41,6 +35,7 @@ class MNIST_CNN(nn.Module):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
+        x = F.relu(self.conv4(x))
         x = self.gap(x)
         x = x.view(-1, x.size(1))
         return x
@@ -48,17 +43,17 @@ class MNIST_CNN(nn.Module):
     def forward_dbg(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
-        x_conv3 = F.relu(self.conv3(x))
-        pred = self.gap(x_conv3)
+        x = F.relu(self.conv3(x))
+        x_features = F.relu(self.conv4(x))
+        pred = self.gap(x_features)
         x = x.view(-1, x.size(1))
-        return pred.detach(), x_conv3.detach()
+        return pred.detach(), x_features.detach()
 
 
 def load_trainset(batch_size=4):
     transform = transforms.Compose(
         [
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))])
+            transforms.ToTensor()])
 
     trainset = torchvision.datasets.MNIST(
         root='./data/MNIST', train=True, download=True, transform=transform)
@@ -71,8 +66,7 @@ def load_trainset(batch_size=4):
 def load_testset(batch_size=4, shuffle=False):
     transform = transforms.Compose(
         [
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))])
+            transforms.ToTensor()])
 
     testset = torchvision.datasets.MNIST(
         root='./data/MNIST', train=False, download=True, transform=transform)
@@ -93,14 +87,14 @@ def x_train_MNIST_nn():
             num_epochs=10,
             trainloader=load_trainset(batch_size=50),
             validloader=load_testset(),
-            savepath='./data/models/mnist_cnn.pth')
+            savepath='./data/models/mnist_cnn_gap.pth')
 
 
 def x_gen_heatmap():
     # load the model
     model = MNIST_CNN()
     try:
-        model.load_state_dict(torch.load("./data/models/mnist_cnn.pth"))
+        model.load_state_dict(torch.load("./data/models/mnist_cnn_gap.pth"))
     except Exception:
         model = MNIST_CNN()
         optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
@@ -111,7 +105,7 @@ def x_gen_heatmap():
             num_epochs=10,
             trainloader=load_trainset(batch_size=50),
             validloader=load_testset(batch_size=50),
-            savepath='./data/models/mnist_cnn.pth')
+            savepath='./data/models/mnist_cnn_gap.pth')
 
     # load the data for the heatmap generation
     data = iter(load_testset(shuffle=True)).next()
