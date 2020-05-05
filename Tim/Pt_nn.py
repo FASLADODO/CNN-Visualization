@@ -8,8 +8,6 @@ import numpy as np
 
 import cv2
 
-from PIL import Image
-
 import matplotlib.pyplot as pyplt
 import matplotlib.image as mpimage
 
@@ -166,7 +164,13 @@ def gen_heatmap_pure_gap(model, data):
 #                   generated
 #   feature_layer:  The layer to which the CAM belongs to
 #   filename:       Name of the file that the CAM is saved to
-def gen_heatmap_grad(model, input_image, image, class_index=None, feature_layer=None, filename='CAM'):
+def gen_heatmap_grad(
+        model,
+        input_image,
+        image,
+        class_index=None,
+        feature_layer=None,
+        filename='CAM'):
 
     # Make forward pass through the network with the given set of images.
     model.eval()
@@ -217,7 +221,7 @@ def gen_heatmap_grad(model, input_image, image, class_index=None, feature_layer=
     heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
     superimposed_img = heatmap * 0.4 + np.uint8(image_rgb.numpy())
 
-    filepath = './Tim/data/FeatureMaps/' + filename +\
+    filepath = './data/FeatureMaps/' + filename +\
         '_c' + str(class_index) +\
         '_f' + str(feature_layer) +\
         '.jpg'
@@ -301,43 +305,3 @@ def plot_imgs(loader, one_channel=True):
 
     # show images
     matplotlib_imshow(img_grid, one_channel=one_channel)
-
-    act_maps = F.relu(act_maps)
-    act_maps = act_maps / torch.max(act_maps)
-
-    nrows = images.size()[0]
-    ncols = min(6, predictions.size()[1])
-
-    height = 6
-    width = 8
-
-    fig, axs = pyplt.subplots(
-        nrows=nrows, ncols=ncols, figsize=[height, width])
-
-    for ax in axs.flat:
-        ax.axis('off')
-
-    for img_indx in range(images.size()[0]):
-        x = img_indx
-        y = 0
-
-        axs[x, y].imshow(
-            images[img_indx, :, :, :].permute([1, 2, 0]).squeeze())
-        axs[x, y].set_title(labels[img_indx])
-
-    for img_indx in range(images.size()[0]):
-        sort_indcs = torch.argsort(
-            predictions[img_indx, :], descending=True)
-        for feature_indx in range(ncols - 1):
-            x = img_indx
-            y = feature_indx + 1
-
-            axs[x, y].imshow(
-                act_maps[img_indx, sort_indcs[feature_indx], :, :].squeeze(),
-                cmap='gray')
-            axs[x, y].set_title(
-                str(sort_indcs[feature_indx].tolist()) + ": " +
-                str(predictions[img_indx, sort_indcs[feature_indx].tolist()]))
-
-    # pyplt.tight_layout(True)
-    pyplt.show()

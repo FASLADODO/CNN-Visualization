@@ -21,20 +21,19 @@ class VGG16_CNN(nn.Module):
 
         # dissect the network in order to get access to the feature maps of
         # the convolutional layers
-        self.features = self.vgg16.features[:30]
-
-        # We have to add the missing max pooling operation again...
-        self.max_pool = self.vgg16.features[30]
-
-        # Extract the remaining layers of the VGG16 network
-        self.avg_pool = self.vgg16.avgpool
-        self.classifier = self.vgg16.classifier
+        self.vgg16.features[29].register_backward_hook(self.grad_hook)
+        self.vgg16.features[29].register_forward_hook(self.feature_hook)
 
         # Create class variable to store the gradients
         self.gradients = None
 
-    def grad_hook(self, gradients):
-        self.gradients = gradients
+        self.feature_maps = None
+
+    def grad_hook(self, layer, input, output):
+        self.gradients = input[0]
+
+    def feature_hook(self, layer, input, output):
+        self.feature_maps = output
 
     def get_feature_gradients(self, feature_layer=None):
         if feature_layer is None:
@@ -42,18 +41,11 @@ class VGG16_CNN(nn.Module):
 
     def get_feature_maps(self, x, feature_layer=None):
         if feature_layer is None:
-            x = self.features(x)
+            x = self.feature_maps
             return x
 
     def forward(self, x):
-        x = self.get_feature_maps(x)
-
-        x.register_hook(self.grad_hook)
-
-        x = self.max_pool(x)
-        x = self.avg_pool(x)
-        x = x.view((x.shape[0], -1))
-        x = self.classifier(x)
+        x = self.vgg16(x)
         return x
 
 
