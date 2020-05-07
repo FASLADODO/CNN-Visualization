@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import torchvision
-
 import numpy as np
 
 import cv2
 
-import matplotlib.pyplot as pyplt
+import matplotlib.pyplot as plt
 import matplotlib.image as mpimage
+
+import ImageNet_classlabels
 
 
 # train the neural network to classify images of the CIFAR10 dataset.
@@ -169,73 +169,85 @@ def gen_heatmap_grad(
         input_image,
         image,
         class_index=None,
-        feature_layer=None,
+        feature_layers=[0],
         filename='CAM'):
 
     # Make forward pass through the network with the given set of images.
     model.eval()
 
-    pred = model.forward(input_image)
+    model.reset()
+
+    pred = model(input_image)
 
     # Get the predicted class.
     if class_index is None:
         _, class_index = torch.max(pred, 1)
     # predictions = F.softmax(pred, 1)
 
+    print(ImageNet_classlabels.classlabels[class_index.item()])
+
     # Backward pass to compute the gradients of the activation layers.
     pred[:, class_index].backward()
 
-    # Get the gradients from the model.
-    gradients = model.get_feature_gradients(feature_layer)
-    # Compute the weighting coefficients by averaging over the gradients of
-    # each feature layer.
-    alpha = torch.mean(gradients, dim=[0, 2, 3])
+    imgs = []
 
-    # Get the activation maps from the model.
-    activations = model.get_feature_maps(input_image, feature_layer).detach()
+    for feature_layer in feature_layers:
 
-    # Weight the activation maps with the weighting coefficients alpha.
-    for i in range(activations.size()[1]):
-        activations[:, i, :, :] *= alpha[i]
+        # Get the gradients from the model.
+        gradients = model.get_feature_gradients(feature_layer)
+        # Compute the weighting coefficients by averaging over the gradients of
+        # each feature layer.
+        alpha = torch.mean(gradients, dim=[0, 2, 3])
 
-    # Average the activations over all channels
-    heatmap = torch.mean(activations, dim=1).squeeze()
+        # Get the activation maps from the model.
+        activations = model.get_feature_maps(
+            input_image, feature_layer).detach()
 
-    # Apply ReLU to the heatmap in order to only account for positive
-    # contributions to the predicted class.
-    heatmap = F.relu(heatmap)
+        # Weight the activation maps with the weighting coefficients alpha.
+        for i in range(activations.size()[1]):
+            activations[:, i, :, :] *= alpha[i]
 
-    # Normalize the heatmap
-    heatmap = heatmap / torch.max(heatmap)
+        # Average the activations over all channels
+        heatmap = torch.mean(activations, dim=1).squeeze()
 
-    # Convert image tensor to three channel image
-    if image.shape[0] == 3:
-        image_rgb = image
-    else:
-        image_rgb = image.repeat(3, 1, 1)
+        # Apply ReLU to the heatmap in order to only account for positive
+        # contributions to the predicted class.
+        heatmap = F.relu(heatmap)
 
-    image_rgb = image_rgb.permute(1, 2, 0) * 255
+        # Normalize the heatmap
+        heatmap = heatmap / torch.max(heatmap)
 
-    heatmap = cv2.resize(heatmap.numpy(), (image.shape[2], image.shape[1]))
-    heatmap = np.uint8(255 * heatmap)
-    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-    superimposed_img = heatmap * 0.4 + np.uint8(image_rgb.numpy())
+        # Convert image tensor to three channel image
+        if image.shape[0] == 3:
+            image_rgb = image
+        else:
+            image_rgb = image.repeat(3, 1, 1)
 
-    filepath = './data/FeatureMaps/' + filename +\
-        '_c' + str(class_index) +\
-        '_f' + str(feature_layer) +\
-        '.jpg'
+        image_rgb = image_rgb.permute(1, 2, 0) * 255
 
-    cv2.imwrite(filepath, superimposed_img)
+        heatmap = cv2.resize(heatmap.numpy(), (image.shape[2], image.shape[1]))
+        heatmap = np.uint8(255 * heatmap)
+        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+        superimposed_img = heatmap * 0.4 + np.uint8(image_rgb.numpy())
 
-    # clip image to range [0, 255]
-    superimposed_img = np.maximum(0, superimposed_img)
-    superimposed_img = np.minimum(255, superimposed_img)
+        filepath = './data/FeatureMaps/' + filename +\
+            '_c' + str(class_index.item()) +\
+            '_f' + str(feature_layer) +\
+            '.jpg'
 
-    img = mpimage.imread(filepath)
+        cv2.imwrite(filepath, superimposed_img)
 
-    pyplt.imshow(img)
-    pyplt.show()
+        # clip image to range [0, 255]
+        superimposed_img = np.maximum(0, superimposed_img)
+        superimposed_img = np.minimum(255, superimposed_img)
+
+        img = mpimage.imread(filepath)
+
+        _, pred_indx = torch.max(pred, 1)
+
+        imgs.append(img)
+
+    return imgs, pred_indx, F.softmax(pred, 1).squeeze()[pred_indx]
 
 
 def plot_heatmaps(images, labels, act_maps, predictions, num_maps):
@@ -249,7 +261,7 @@ def plot_heatmaps(images, labels, act_maps, predictions, num_maps):
     height = 6
     width = 8
 
-    fig, axs = pyplt.subplots(
+    fig, axs = plt.subplots(
         nrows=nrows, ncols=ncols, figsize=[height, width])
 
     for ax in axs.flat:
@@ -278,30 +290,4 @@ def plot_heatmaps(images, labels, act_maps, predictions, num_maps):
                 str(predictions.detach().numpy()[
                     img_indx, sort_indcs[feature_indx].tolist()]))
 
-    pyplt.show()
-
-
-# helper function to show an image
-# (used in the `plot_classes_preds` function below)
-def matplotlib_imshow(img, one_channel=False):
-    if one_channel:
-        img = img.mean(dim=0)
-    npimg = img.numpy()
-    if one_channel:
-        pyplt.imshow(npimg, cmap="Greys")
-    else:
-        pyplt.imshow(np.transpose(npimg, (1, 2, 0)))
-
-    pyplt.show()
-
-
-def plot_imgs(loader, one_channel=True):
-    # get some random training images
-    dataiter = iter(loader)
-    images, labels = dataiter.next()
-
-    # create grid of images
-    img_grid = torchvision.utils.make_grid(images)
-
-    # show images
-    matplotlib_imshow(img_grid, one_channel=one_channel)
+    plt.show()
